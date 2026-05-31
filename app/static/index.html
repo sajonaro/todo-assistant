@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Todo Assistant</title>
+<style>
+  :root { --bg:#0f1115; --card:#171a21; --line:#262b36; --fg:#e6e9ef; --muted:#8b93a7; --accent:#6ea8fe; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+         font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; }
+  .wrap { max-width:840px; margin:2.5rem auto; padding:0 1rem; }
+  h1 { font-size:1.4rem; margin:0 0 .25rem; }
+  .sub { color:var(--muted); margin:0 0 1.5rem; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px;
+          padding:1.1rem 1.2rem; margin-bottom:1.25rem; }
+  label { display:block; font-size:.8rem; color:var(--muted); margin:.5rem 0 .2rem; }
+  input, select, button { font:inherit; }
+  input, select { width:100%; padding:.5rem .6rem; background:#0f131b; color:var(--fg);
+                  border:1px solid var(--line); border-radius:8px; }
+  .row { display:flex; gap:.75rem; flex-wrap:wrap; }
+  .row > div { flex:1; min-width:140px; }
+  button { cursor:pointer; border:1px solid var(--line); background:#222836; color:var(--fg);
+           border-radius:8px; padding:.45rem .8rem; }
+  button.primary { background:var(--accent); color:#08203f; border-color:transparent; font-weight:600; }
+  button:hover { filter:brightness(1.12); }
+  button:disabled { opacity:.35; cursor:not-allowed; }
+  .toolbar { display:flex; gap:.5rem; align-items:end; flex-wrap:wrap; margin-bottom:.5rem; }
+  .toolbar > div { flex:0 0 auto; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:.55rem .5rem; border-bottom:1px solid var(--line); vertical-align:middle; }
+  th { color:var(--muted); font-weight:600; font-size:.78rem; text-transform:uppercase; letter-spacing:.03em; }
+  .badge { display:inline-block; padding:.12rem .5rem; border-radius:999px; font-size:.75rem; }
+  .s-pending{background:#33405e;color:#bcd0ff} .s-done{background:#23402e;color:#9be3b4}
+  .s-snoozed{background:#3a3320;color:#e6d29b} .s-dropped{background:#3a2630;color:#e6a9bf}
+  .s-overdue{background:#4a2222;color:#f1a3a3}
+  .acts button { padding:.25rem .5rem; font-size:.8rem; margin-right:.25rem; }
+  .muted { color:var(--muted); }
+  #msg { min-height:1.2rem; font-size:.85rem; margin-top:.4rem; }
+  .err { color:#f1a3a3; } .ok { color:#9be3b4; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Todo Assistant</h1>
+  <p class="sub">Add tasks, then mark them done / snooze / drop. Each task starts a durable nudge workflow.</p>
+
+  <div class="card">
+    <div class="row">
+      <div style="flex:2"><label>Task</label><input id="text" placeholder="e.g. file the quarterly report" /></div>
+      <div><label>Horizon</label>
+        <select id="horizon">
+          <option value="today">today</option>
+          <option value="this_week">this_week</option>
+          <option value="this_month">this_month</option>
+        </select>
+      </div>
+      <div><label>Deadline</label><input id="deadline" type="datetime-local" /></div>
+    </div>
+    <div style="margin-top:.8rem"><button class="primary" onclick="createTask()">Add task</button></div>
+    <div id="msg"></div>
+  </div>
+
+  <div class="card">
+    <div class="toolbar">
+      <div><label>Status</label>
+        <select id="fStatus">
+          <option value="">all</option><option>pending</option><option>done</option>
+          <option>snoozed</option><option>dropped</option><option>overdue</option>
+        </select>
+      </div>
+      <div><label>Horizon</label>
+        <select id="fHorizon">
+          <option value="">all</option><option>today</option><option>this_week</option><option>this_month</option>
+        </select>
+      </div>
+      <div><label>&nbsp;</label><button onclick="loadTasks()">Refresh</button></div>
+    </div>
+    <table>
+      <thead><tr><th>Task</th><th>Horizon</th><th>Deadline</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody id="rows"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function setMsg(text, ok) {
+  const m = $("msg"); m.textContent = text || ""; m.className = ok ? "ok" : "err";
+}
+function fmt(iso) {
+  try { return new Date(iso).toLocaleString(); } catch { return iso; }
+}
+
+// default the deadline picker to ~1 hour from now, in the browser's local time
+(function initDeadline() {
+  const d = new Date(Date.now() + 60 * 60 * 1000);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  $("deadline").value = d.toISOString().slice(0, 16);
+})();
+
+async function createTask() {
+  const text = $("text").value.trim();
+  const dl = $("deadline").value;
+  if (!text) { setMsg("Task text is required.", false); return; }
+  if (!dl) { setMsg("Deadline is required.", false); return; }
+  const body = { text, horizon: $("horizon").value, deadline_iso: new Date(dl).toISOString() };
+  try {
+    const r = await fetch("/tasks", { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify(body) });
+    if (!r.ok) throw new Error(await r.text());
+    $("text").value = "";
+    setMsg("Task created.", true);
+    loadTasks();
+  } catch (e) { setMsg("Create failed: " + e.message, false); }
+}
+
+async function action(id, verb, payload) {
+  try {
+    const opts = { method:"POST" };
+    if (payload) { opts.headers = {"content-type":"application/json"}; opts.body = JSON.stringify(payload); }
+    const r = await fetch(`/tasks/${id}/${verb}`, opts);
+    if (!r.ok) throw new Error(await r.text());
+    setMsg(`Marked ${verb}.`, true);
+    loadTasks();
+  } catch (e) { setMsg(`${verb} failed: ` + e.message, false); }
+}
+
+async function loadTasks() {
+  const qs = new URLSearchParams();
+  if ($("fStatus").value) qs.set("status", $("fStatus").value);
+  if ($("fHorizon").value) qs.set("horizon", $("fHorizon").value);
+  try {
+    const r = await fetch("/tasks?" + qs.toString());
+    const tasks = await r.json();
+    const tbody = $("rows");
+    if (!tasks.length) { tbody.innerHTML = `<tr><td colspan="5" class="muted">No tasks.</td></tr>`; return; }
+    tbody.innerHTML = tasks.map(t => {
+      const pending = t.status === "pending";
+      const acts = pending ? `
+        <button onclick="action('${t.id}','done')">Done</button>
+        <button onclick="action('${t.id}','snooze',{delay_hours:24})">Snooze 1d</button>
+        <button onclick="action('${t.id}','drop')">Drop</button>` : `<span class="muted">—</span>`;
+      return `<tr>
+        <td>${escapeHtml(t.text)}</td>
+        <td class="muted">${t.horizon}</td>
+        <td>${fmt(t.deadline)}</td>
+        <td><span class="badge s-${t.status}">${t.status}</span></td>
+        <td class="acts">${acts}</td>
+      </tr>`;
+    }).join("");
+  } catch (e) { $("rows").innerHTML = `<tr><td colspan="5" class="err">Load failed: ${e.message}</td></tr>`; }
+}
+
+function escapeHtml(s){ return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+loadTasks();
+</script>
+</body>
+</html>
