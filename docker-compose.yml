@@ -16,6 +16,10 @@ services:
       - pgdata:/var/lib/postgresql/data
 
   app:
+    # Published by .github/workflows/build-image.yml on every push to main.
+    # `docker compose pull && docker compose up` uses the registry image.
+    # `docker compose up --build` rebuilds locally (tagged with the same name).
+    image: ghcr.io/sajonaro/todo-assistant:latest
     build: .
     depends_on:
       db:
