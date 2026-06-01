@@ -17,10 +17,14 @@ db:                     ## start ONLY postgres (for local dev with `make run`)
 	@until docker compose exec -T db pg_isready -U postgres -d todo >/dev/null 2>&1; do sleep 1; done
 	@echo "postgres ready"
 
-up:                     ## build + run the WHOLE stack (postgres + app) in containers
+up-local:                     ## build + run the WHOLE stack (postgres + app) in containers
 	docker compose up -d --build
 	@echo "app: http://localhost:8000"
 
+up:	
+	docker compose pull && docker compose up
+	@echo "app: http://localhost:8000"
+	
 down:
 	docker compose down
 
