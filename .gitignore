@@ -1,6 +1,8 @@
 # --- Project-specific ---
-# Design specs / implementation plans are kept locally, not versioned.
-/docs/
+# Design specs / implementation plans are kept locally, not versioned;
+# everything else under docs/ IS versioned.
+/docs/**/plans/
+/docs/**/specs/
 
 # --- Python ---
 __pycache__/
