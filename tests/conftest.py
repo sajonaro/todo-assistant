@@ -1,4 +1,5 @@
 import os
+
 import pytest
 
 # Separate system DB from app DB: reset_system_database() drops/recreates the SYSTEM
@@ -7,6 +8,7 @@ os.environ.setdefault("APP_DATABASE_URL", "postgresql://postgres:postgres@localh
 os.environ.setdefault("DBOS_SYSTEM_DATABASE_URL", "postgresql://postgres:postgres@localhost:5433/todo_dbos_sys")
 
 from dbos import DBOS, DBOSConfig  # noqa: E402
+
 import app.db as db  # noqa: E402  (registers @ds.transaction functions)
 import app.workflows  # noqa: E402,F401  (registers workflows once they exist)
 

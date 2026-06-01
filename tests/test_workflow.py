@@ -2,8 +2,9 @@ import os
 import sys
 import uuid
 from datetime import timedelta
+
 import app.db as db
-from app.workflows import nudge_workflow, ACTION_TOPIC
+from app.workflows import ACTION_TOPIC, nudge_workflow
 
 
 def _new_id() -> str:
@@ -54,6 +55,7 @@ def test_crash_resume():
     """
     import subprocess
     import time as _time
+
     from dbos import DBOS
 
     tid = _new_id()

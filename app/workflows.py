@@ -1,24 +1,29 @@
 from datetime import datetime, timedelta
+
 from dbos import DBOS
+
 import app.db as db
 from app.notifications import send_notification
 
 ACTION_TOPIC = "action"
+_TERMINAL = {"done": "done", "drop": "dropped"}  # action -> status
 
 
 def _handle_event(task_id: str, event: dict) -> str:
     """Apply an action to the DB. Returns 'snooze' (re-loop) or 'exit'."""
     action = event.get("action")
-    if action == "done":
-        db.set_status(task_id, "done")
-        return "exit"
-    if action == "drop":
-        db.set_status(task_id, "dropped")
-        return "exit"
     if action == "snooze":
         db.set_deadline(task_id, event["new_deadline"])  # sets status back to pending
         return "snooze"
+    if action in _TERMINAL:
+        db.set_status(task_id, _TERMINAL[action])
     return "exit"
+
+
+def _await_action(task_id: str, timeout: float) -> str | None:
+    """Block for an action. Returns None on timeout, else 'snooze'/'exit'."""
+    event = DBOS.recv(ACTION_TOPIC, timeout_seconds=max(0.0, timeout))
+    return _handle_event(task_id, event) if event is not None else None
 
 
 @DBOS.workflow()
@@ -28,35 +33,25 @@ def nudge_workflow(task_id: str) -> None:
         if task is None or task["status"] != "pending":
             return
         deadline = task["deadline"]
-
-        # Phase 1: durable interruptible wait until T-1h
-        delay = max(0.0, (deadline - timedelta(hours=1) - db.utcnow()).total_seconds())
-        event = DBOS.recv(ACTION_TOPIC, timeout_seconds=delay)
-        if event is not None:
-            if _handle_event(task_id, event) == "snooze":
-                continue
+        # (notification-or-None, lambda -> seconds to wait). Lambdas re-read the clock
+        # per phase, so each wait targets the right moment even after earlier waits.
+        # d=deadline binds by value (deadline is stable within an iteration; rebuilt on re-loop).
+        phases = [
+            (None, lambda d=deadline: (d - timedelta(hours=1) - db.utcnow()).total_seconds()),
+            (("Heads up: deadline in 1h", False), lambda: 1800.0),
+            (("STILL pending. Do it or drop it.", True), lambda d=deadline: (d - db.utcnow()).total_seconds()),
+        ]
+        for notify, timeout in phases:
+            if notify:
+                send_notification(task_id, notify[0], urgent=notify[1])
+            outcome = _await_action(task_id, timeout())
+            if outcome == "exit":
+                return
+            if outcome == "snooze":
+                break  # restart the while-loop with the refreshed deadline
+        else:
+            db.set_status(task_id, "overdue")  # no break -> every phase timed out
             return
-
-        # Phase 2: first nudge, 30-minute grace
-        send_notification(task_id, "Heads up: deadline in 1h")
-        event = DBOS.recv(ACTION_TOPIC, timeout_seconds=1800)
-        if event is not None:
-            if _handle_event(task_id, event) == "snooze":
-                continue
-            return
-
-        # Phase 3: escalate, wait until deadline
-        send_notification(task_id, "STILL pending. Do it or drop it.", urgent=True)
-        delay = max(0.0, (deadline - db.utcnow()).total_seconds())
-        event = DBOS.recv(ACTION_TOPIC, timeout_seconds=delay)
-        if event is not None:
-            if _handle_event(task_id, event) == "snooze":
-                continue
-            return
-
-        # Phase 4: missed it
-        db.set_status(task_id, "overdue")
-        return
 
 
 def _send_summary(title: str, tasks: list[dict]) -> None:
