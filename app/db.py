@@ -1,9 +1,10 @@
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
-from sqlalchemy import create_engine, text as sa_text
+
 from dbos import SQLAlchemyDatasource
+from sqlalchemy import create_engine
+from sqlalchemy import text as sa_text
 
 ds = SQLAlchemyDatasource.create(os.environ["APP_DATABASE_URL"])
 
@@ -11,7 +12,7 @@ _MIGRATION = Path(__file__).resolve().parent.parent / "migrations" / "001_init.s
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def apply_migration() -> None:
@@ -40,16 +41,23 @@ def insert_task(id: str, text: str, horizon: str, deadline: datetime) -> None:
     )
 
 
-@ds.transaction()
-def set_workflow_id(task_id: str, workflow_id: str) -> None:
+def _update_task(task_id: str, **cols) -> None:
+    """Set the given columns (TRUSTED names only) + updated_at on one task.
+    Column names are interpolated, so never pass a user-supplied key here."""
+    assignments = ", ".join(f"{c} = :{c}" for c in cols)
     ds.sql_session().execute(
-        sa_text("UPDATE todo.tasks SET workflow_id = :wf, updated_at = now() WHERE id = :id"),
-        {"wf": workflow_id, "id": task_id},
+        sa_text(f"UPDATE todo.tasks SET {assignments}, updated_at = now() WHERE id = :id"),
+        {**cols, "id": task_id},
     )
 
 
 @ds.transaction()
-def get_task(task_id: str) -> Optional[dict]:
+def set_workflow_id(task_id: str, workflow_id: str) -> None:
+    _update_task(task_id, workflow_id=workflow_id)
+
+
+@ds.transaction()
+def get_task(task_id: str) -> dict | None:
     row = ds.sql_session().execute(
         sa_text("SELECT * FROM todo.tasks WHERE id = :id"), {"id": task_id}
     ).mappings().first()
@@ -57,34 +65,20 @@ def get_task(task_id: str) -> Optional[dict]:
 
 
 @ds.transaction()
-def list_tasks(status: Optional[str] = None, horizon: Optional[str] = None) -> list[dict]:
-    sql = "SELECT * FROM todo.tasks WHERE 1=1"
-    params: dict = {}
-    if status:
-        sql += " AND status = :status"
-        params["status"] = status
-    if horizon:
-        sql += " AND horizon = :horizon"
-        params["horizon"] = horizon
-    sql += " ORDER BY deadline ASC"
-    rows = ds.sql_session().execute(sa_text(sql), params).mappings().all()
+def list_tasks(status: str | None = None, horizon: str | None = None) -> list[dict]:
+    filters = {k: v for k, v in {"status": status, "horizon": horizon}.items() if v}
+    where = (" WHERE " + " AND ".join(f"{k} = :{k}" for k in filters)) if filters else ""
+    rows = ds.sql_session().execute(
+        sa_text(f"SELECT * FROM todo.tasks{where} ORDER BY deadline ASC"), filters
+    ).mappings().all()
     return [dict(r) for r in rows]
 
 
 @ds.transaction()
 def set_status(task_id: str, status: str) -> None:
-    ds.sql_session().execute(
-        sa_text("UPDATE todo.tasks SET status = :s, updated_at = now() WHERE id = :id"),
-        {"s": status, "id": task_id},
-    )
+    _update_task(task_id, status=status)
 
 
 @ds.transaction()
 def set_deadline(task_id: str, deadline: datetime) -> None:
-    ds.sql_session().execute(
-        sa_text(
-            "UPDATE todo.tasks SET deadline = :d, status = 'pending', updated_at = now() "
-            "WHERE id = :id"
-        ),
-        {"d": deadline, "id": task_id},
-    )
+    _update_task(task_id, deadline=deadline, status="pending")

@@ -1,5 +1,6 @@
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Literal
+
 from pydantic import BaseModel
 
 Horizon = Literal["today", "this_week", "this_month"]
@@ -22,4 +23,4 @@ class TaskOut(BaseModel):
     horizon: Horizon
     deadline: datetime
     status: Status
-    workflow_id: Optional[str] = None
+    workflow_id: str | None = None
